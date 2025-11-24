@@ -159,21 +159,22 @@ def export_to_word(df, path, max_items=80):
 if __name__ == "__main__":
 
     # -----------------------------------
-    # CONFIGURE YOUR TEST HERE
+    # CONFIGURE YOUR TEST HERE all lowercase subs
     # -----------------------------------
     SUBREDDITS = [
-        "politics",
-        "The_Donald",
+        "marchagainstnazis",
+        "the_donald",
+        "antifascistsofreddit"
     ]
 
-    KEYWORDS = "BLM OR protest OR riots"
+    KEYWORDS = "hate"
     # Example: any of these words appearing in comment body
 
-    AFTER = "2016-10-01"
-    BEFORE = "2016-11-30T23:59:59"
+    AFTER = "2017-01-01"
+    BEFORE = "2025-01-01"
 
-    LIMIT = 100     # Max 100 per subreddit per request
-    TOP_N = 80      # Export only top 80 highest-score comments
+    LIMIT = 99     # Max 100 comments per subreddit per request
+    TOP_N = 80      # Export only top X highest-score comments
 
     # -----------------------------------
     # RUN THE PIPELINE
