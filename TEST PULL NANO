@@ -1,0 +1,191 @@
+import requests
+import pandas as pd
+from datetime import datetime, timezone
+from docx import Document
+from docx.shared import Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+BASE_URL = "https://arctic-shift.photon-reddit.com/api/comments/search"
+
+
+# ---------------------------
+# PSEUDONYMIZATION FUNCTION
+# ---------------------------
+def pseudonymize_authors(df):
+    """
+    Replace authors with pseudo-IDs like User001, User002...
+    Keep '[deleted]' or 'AutoModerator' as-is.
+    """
+    mapping = {}
+    counter = 1
+
+    pseudo_authors = []
+
+    for author in df["author"]:
+        if author in [None, "[deleted]", "AutoModerator"]:
+            pseudo_authors.append(author)
+            continue
+
+        if author not in mapping:
+            mapping[author] = f"User{counter:03d}"
+            counter += 1
+        pseudo_authors.append(mapping[author])
+
+    df["pseudo_author"] = pseudo_authors
+    return df
+
+
+# ---------------------------
+# FETCH COMMENTS
+# ---------------------------
+def fetch_comments(subreddits, keywords, after, before, limit=100):
+    """
+    Query Arctic Shift for comments matching:
+    - subreddit list
+    - keyword(s) in comment body
+    - date range
+    - limit per request
+    """
+
+    all_rows = []
+
+    for sub in subreddits:
+        params = {
+            "subreddit": sub,
+            "after": after,
+            "before": before,
+            "limit": limit,
+        }
+
+        # Arctic Shift uses "body" for keyword search
+        if keywords:
+            params["body"] = keywords
+
+        print(f"\nRequesting comments from r/{sub} ...")
+        resp = requests.get(BASE_URL, params=params, timeout=60)
+        resp.raise_for_status()
+
+        data = resp.json()
+
+        # Normal format: {"data": [...]}
+        if isinstance(data, dict) and "data" in data:
+            rows = data["data"]
+        elif isinstance(data, list):
+            rows = data
+        else:
+            rows = []
+
+        print(f"Retrieved {len(rows)} comments from r/{sub}")
+
+        for item in rows:
+            created_utc = item.get("created_utc")
+            created_dt = (
+                datetime.fromtimestamp(created_utc, tz=timezone.utc)
+                if isinstance(created_utc, (int, float))
+                else None
+            )
+
+            all_rows.append({
+                "subreddit": item.get("subreddit"),
+                "id": item.get("id"),
+                "created_utc": created_utc,
+                "created_datetime_utc": created_dt,
+                "author": item.get("author"),
+                "score": item.get("score"),
+                "body": item.get("body"),
+                "link_id": item.get("link_id"),
+                "parent_id": item.get("parent_id"),
+            })
+
+    df = pd.DataFrame(all_rows)
+    return df
+
+
+# ---------------------------
+# EXPORT TO WORD
+# ---------------------------
+def export_to_word(df, path, max_items=80):
+    """
+    Export comments to a Word document with formatting
+    similar to your Moral Injury project.
+    """
+
+    doc = Document()
+
+    # Title
+    title = doc.add_heading("Arctic Shift Comments Export", level=1)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    if df.empty:
+        doc.add_paragraph("No comments matched your filters.")
+        doc.save(path)
+        print(f"\nSaved empty document: {path}")
+        return
+
+    # Loop through comments
+    for _, row in df.head(max_items).iterrows():
+
+        # Heading line
+        h = doc.add_heading(level=2)
+        run = h.add_run(f"r/{row['subreddit']} • {row['pseudo_author']} • Score {row['score']}")
+        run.bold = True
+
+        # Metadata line
+        meta_p = doc.add_paragraph()
+        meta_text = (
+            f"Created (UTC): {row['created_datetime_utc'].isoformat() if row['created_datetime_utc'] else 'unknown'}"
+        )
+        meta_run = meta_p.add_run(meta_text)
+        meta_run.italic = True
+        meta_p.paragraph_format.space_after = Pt(6)
+
+        # Body text
+        body_text = row.get("body") or "[no content]"
+        body_p = doc.add_paragraph(body_text)
+        body_p.paragraph_format.space_after = Pt(12)
+
+        # Separator line
+        sep = doc.add_paragraph("────────────")
+        sep.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        sep.paragraph_format.space_after = Pt(18)
+
+    doc.save(path)
+    print(f"\nWord document saved to: {path}")
+
+
+# ---------------------------
+# MAIN EXECUTION
+# ---------------------------
+if __name__ == "__main__":
+
+    # -----------------------------------
+    # CONFIGURE YOUR TEST HERE
+    # -----------------------------------
+    SUBREDDITS = [
+        "politics",
+        "The_Donald",
+    ]
+
+    KEYWORDS = "BLM OR protest OR riots"
+    # Example: any of these words appearing in comment body
+
+    AFTER = "2016-10-01"
+    BEFORE = "2016-11-30T23:59:59"
+
+    LIMIT = 100     # Max 100 per subreddit per request
+    TOP_N = 80      # Export only top 80 highest-score comments
+
+    # -----------------------------------
+    # RUN THE PIPELINE
+    # -----------------------------------
+    df = fetch_comments(SUBREDDITS, KEYWORDS, AFTER, BEFORE, LIMIT)
+
+    # Sort by score to get "top comments"
+    if not df.empty:
+        df = df.sort_values(by="score", ascending=False)
+
+    # Pseudonymize
+    df = pseudonymize_authors(df)
+
+    # Export
+    export_to_word(df, "arctic_shift_comments.docx", max_items=TOP_N)
